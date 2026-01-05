@@ -113,6 +113,11 @@ bool QuickJsState::Load(const QString &path, qhookerMain *owner)
     JS_SetPropertyStr(context, qmhObj, "write", JS_NewCFunction(context, JsQmhWrite, "write", 2));
 #ifdef Q_OS_WIN
     JS_SetPropertyStr(context, qmhObj, "xinputVibrate", JS_NewCFunction(context, JsQmhXInputVibrate, "xinputVibrate", 3));
+#else
+    JS_SetPropertyStr(context, qmhObj, "xinputVibrate", JS_NewCFunction(context,
+        [](JSContext *ctx, JSValueConst, int, JSValueConst *) -> JSValue {
+            return JS_NewBool(ctx, false);
+        }, "xinputVibrate", 3));
 #endif
     JS_SetPropertyStr(context, globalObj, "qmh", qmhObj);
 
