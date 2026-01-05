@@ -45,26 +45,26 @@ function on_MameStop(context) {
 }
 
 function on_P1_LmpStar(value, context) {
-    // Example: drive lamp on/off (value is usually 0/1).
-    qmh.write(1, value ? "L1" : "L0");
+    // Example: drive LED on/off (value is usually 0/1).
+    qmh.write(1, value ? "F2x1" : "F2x0");
 }
 
 function on_P2_LmpStar(value, context) {
     // Example: second player lamp.
     if(context.portCount >= 2)
-        qmh.write(2, value ? "L1" : "L0");
+        qmh.write(2, value ? "F2x1" : "F2x0");
 }
 
 function on_P1_GunRecoil(value, context) {
     // Example: recoil on shot (value is usually 0/1).
-    qmh.write(1, value ? "R1" : "R0");
+    qmh.write(1, value ? "F0x1" : "F0x0");
     // XInput example: short rumble on player 1 controller.
     qmh.xinputVibrate(0, value ? 50000 : 0, value ? 20000 : 0);
 }
 
 function on_P2_GunRecoil(value, context) {
     if(context.portCount >= 2)
-        qmh.write(2, value ? "R1" : "R0");
+        qmh.write(2, value ? "F0x1" : "F0x0");
     // XInput example: short rumble on player 2 controller.
     qmh.xinputVibrate(1, value ? 50000 : 0, value ? 20000 : 0);
 }
