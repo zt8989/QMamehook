@@ -8,10 +8,15 @@
 #include <QTextStream>
 #include <QSerialPort>
 #include <QSerialPortInfo>
+#include "qhookerquickjs.h"
+
+#include "xinput_wrapper.h"
 
 class qhookerMain : public QObject
 {
     Q_OBJECT
+
+    friend class QuickJsState;
 
 private:
     QCoreApplication *mainApp;
@@ -32,7 +37,13 @@ private:
 
     QHash<QString, QString> settingsMap;
 
-    void LoadConfig(const QString &);
+    QuickJsState quickJs;
+
+    XInputWrapper xinput;
+
+    bool LoadConfig(const QString &);
+
+    void ClearConfig();
 
     void SerialInit();
 
@@ -53,6 +64,7 @@ public:
     } sortTypes_e;
 
     explicit qhookerMain(QObject *parent = 0);
+    ~qhookerMain();
 
     bool verbosity = false;
 
@@ -63,6 +75,14 @@ public:
     int sortType = sortPIDascend;
 
     QString customPath;
+
+    void OpenPort(int portNum);
+
+    void ClosePort(int portNum);
+
+    void WritePort(int portNum, const QByteArray &payload);
+
+    bool SetXInputVibration(int userIndex, int leftMotor, int rightMotor);
 
     void quit();
 

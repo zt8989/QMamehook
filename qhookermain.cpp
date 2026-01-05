@@ -4,15 +4,98 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThread>
+#include <cstdio>
 
 // TODO: core app stuff isn't really needed, looks very messy.
-
 qhookerMain::qhookerMain(QObject *parent)
     : QObject{parent}
 {
     // get the instance of the main application
     mainApp = QCoreApplication::instance();
 }
+
+qhookerMain::~qhookerMain()
+{
+}
+
+void qhookerMain::ClearConfig()
+{
+    if(settings) {
+        delete settings;
+        settings = nullptr;
+    }
+    settingsMap.clear();
+    quickJs.Clear();
+}
+
+bool qhookerMain::SetXInputVibration(int userIndex, int leftMotor, int rightMotor)
+{
+#ifdef Q_OS_WIN
+    return xinput.SetVibration(userIndex, leftMotor, rightMotor);
+#else
+    (void)userIndex;
+    (void)leftMotor;
+    (void)rightMotor;
+    return false;
+#endif
+}
+
+void qhookerMain::OpenPort(int portNum)
+{
+    int portIndex = portNum - 1;
+    if(portIndex < 0 || portIndex >= validIDs.size())
+        return;
+
+    if(!serialPort.at(portIndex)->isOpen()) {
+        serialPort.at(portIndex)->open(QIODevice::WriteOnly);
+        serialPort.at(portIndex)->setDataTerminalReady(true);
+        printf("Opened port no. %d (%04X:%04X @ %s)\n",
+               portIndex+1, validDevices.at(portIndex).vendorIdentifier(), validDevices.at(portIndex).productIdentifier(),
+               serialPort.at(portIndex)->portName().toLocal8Bit().constData());
+    } else {
+        printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already open!\n",
+               portIndex+1, validDevices.at(portIndex).vendorIdentifier(), validDevices.at(portIndex).productIdentifier(),
+               serialPort.at(portIndex)->portName().toLocal8Bit().constData());
+    }
+}
+
+void qhookerMain::ClosePort(int portNum)
+{
+    int portIndex = portNum - 1;
+    if(portIndex < 0 || portIndex >= validIDs.size())
+        return;
+
+    if(serialPort.at(portIndex)->isOpen()) {
+        serialPort.at(portIndex)->close();
+        printf("Closed port no. %d (%04X:%04X @ %s)\n",
+               portIndex+1, validDevices.at(portIndex).vendorIdentifier(), validDevices.at(portIndex).productIdentifier(),
+               serialPort.at(portIndex)->portName().toLocal8Bit().constData());
+    } else {
+        printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already closed!\n",
+               portIndex+1, validDevices.at(portIndex).vendorIdentifier(), validDevices.at(portIndex).productIdentifier(),
+               serialPort.at(portIndex)->portName().toLocal8Bit().constData());
+    }
+}
+
+void qhookerMain::WritePort(int portNum, const QByteArray &payload)
+{
+    int portIndex = portNum - 1;
+    if(portIndex < 0 || portIndex >= validIDs.size())
+        return;
+
+    if(serialPort.at(portIndex)->isOpen()) {
+        serialPort.at(portIndex)->write(payload);
+        if(!serialPort.at(portIndex)->waitForBytesWritten(500))
+            printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
+                   portIndex+1, validDevices.at(portIndex).vendorIdentifier(), validDevices.at(portIndex).productIdentifier(),
+                   serialPort.at(portIndex)->portName().toLocal8Bit().constData());
+    } else {
+        printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
+               portIndex+1, validDevices.at(portIndex).vendorIdentifier(), validDevices.at(portIndex).productIdentifier(),
+               serialPort.at(portIndex)->portName().toLocal8Bit().constData());
+    }
+}
+
 
 void qhookerMain::run()
 {
@@ -60,7 +143,21 @@ void qhookerMain::run()
                     if(!gameName.isEmpty()) {
                         gameName.clear();
 
-                        if(settings && settings->contains("MameStop") && settings->value("MameStop").type() == QMetaType::QStringList) {
+                        if(quickJs.IsActive()) {
+                            quickJs.CallHandler(this, "on_MameStop");
+                            for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
+                                if(serialPort.at(portNum)->isOpen()) {
+                                    serialPort.at(portNum)->write("E");
+                                    if(serialPort.at(portNum)->waitForBytesWritten(500)) {
+                                        serialPort.at(portNum)->close();
+                                        printf("Force-closed port no. %d (%04X:%04X @ %s) since this game uses QuickJS.\n",
+                                               portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                                    } else printf("Sent close signal to port %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
+                                                 portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                                }
+                            }
+                            ClearConfig();
+                        } else if(settings && settings->contains("MameStop") && settings->value("MameStop").type() == QMetaType::QStringList) {
                             QStringList tempBuffer = settings->value("MameStop").toStringList();
                             //qInfo() << tempBuffer;
                             while(!tempBuffer.isEmpty()) {
@@ -99,8 +196,6 @@ void qhookerMain::run()
                                            portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                                 }
 
-                            delete settings;
-                            settingsMap.clear();
                         } else for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
                             if(serialPort.at(portNum)->isOpen()) {
                                 serialPort.at(portNum)->write("E");
@@ -112,6 +207,8 @@ void qhookerMain::run()
                                            portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                             }
                         }
+                        if(settings || !settingsMap.isEmpty())
+                            ClearConfig();
                     }
 
                     if (closeOnDisconnect) {
@@ -349,32 +446,40 @@ bool qhookerMain::GameSearching(const QString &input)
 
         // flycast outputs its start signal with code "game" using a game's full title instead of a mame zip name
         if(buffer.at(0).startsWith("mame_start =") || buffer.at(0).startsWith("game =")) {
-            // flycast (standalone) ALSO doesn't disconnect at any point,
-            // so we terminate and unload any existing settings if a new gameStart is found while a game is already loaded.
-            if(!gameName.isEmpty()) {
+            // Always reset state before loading a new game to keep JS isolated per game.
+            if(!gameName.isEmpty() || settings || !settingsMap.isEmpty() || quickJs.IsActive()) {
                 gameName.clear();
-                if(settings) {
-                    delete settings;
-                    settingsMap.clear();
-                }
+                ClearConfig();
             }
 
             gameName = buffer[0].mid(input.indexOf('=')+2).trimmed().toLocal8Bit();
             printf("Detected game name: %s\n", gameName.constData());
 
             if(gameName != "___empty") {
+                QString basePath;
                 if(customPathSet) {
-                    LoadConfig(customPath + gameName + ".ini");
+                    basePath = customPath;
                 } else {
-                // TODO: there might be a better path for this? Trying to prevent "../QMamehook/QMamehook/ini" on Windows here.
-                LoadConfig(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) +
-                #ifndef Q_OS_WIN
-                "/QMamehook"
-                #endif
-                "/ini/" + gameName + ".ini");
+                    // TODO: there might be a better path for this? Trying to prevent "../QMamehook/QMamehook/ini" on Windows here.
+                    basePath = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) +
+                    #ifndef Q_OS_WIN
+                    "/QMamehook"
+                    #endif
+                    "/ini/";
                 }
 
-                if(settings->contains("MameStart")) {
+                QString jsPath = basePath + gameName + ".js";
+                QString iniPath = basePath + gameName + ".ini";
+                if(QFile::exists(jsPath)) {
+                    if(!LoadConfig(jsPath))
+                        LoadConfig(iniPath);
+                } else {
+                    LoadConfig(iniPath);
+                }
+
+                if(quickJs.IsActive()) {
+                    quickJs.CallHandler(this, "on_MameStart");
+                } else if(settings && settings->contains("MameStart")) {
                     //qInfo() << "Detected start statement:";
                     QStringList tempBuffer = settings->value("MameStart").toStringList();
                     //qInfo() << tempBuffer;
@@ -440,7 +545,21 @@ bool qhookerMain::GameStarted(const QString &input)
             if(!gameName.isEmpty()) {
                 gameName.clear();
 
-                if(settings && settings->contains("MameStop") && settings->value("MameStop").type() == QMetaType::QStringList) {
+                if(quickJs.IsActive()) {
+                    quickJs.CallHandler(this, "on_MameStop");
+                    for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
+                        if(serialPort.at(portNum)->isOpen()) {
+                            serialPort.at(portNum)->write("E");
+                            if(serialPort.at(portNum)->waitForBytesWritten(500)) {
+                                serialPort.at(portNum)->close();
+                                printf("Force-closed port no. %d (%04X:%04X @ %s) since this game uses QuickJS.\n",
+                                       portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                            } else printf("Sent close signal to port %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
+                                         portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                        }
+                    }
+                    ClearConfig();
+                } else if(settings && settings->contains("MameStop") && settings->value("MameStop").type() == QMetaType::QStringList) {
                     QStringList tempBuffer = settings->value("MameStop").toStringList();
                     //qInfo() << tempBuffer;
                     while(!tempBuffer.isEmpty()) {
@@ -479,8 +598,6 @@ bool qhookerMain::GameStarted(const QString &input)
                                    portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                         }
 
-                    delete settings;
-                    settingsMap.clear();
                 } else for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
                     if(serialPort.at(portNum)->isOpen()) {
                         serialPort.at(portNum)->write("E");
@@ -492,10 +609,23 @@ bool qhookerMain::GameStarted(const QString &input)
                                       portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                     }
                 }
+                if(settings || !settingsMap.isEmpty())
+                    ClearConfig();
             }
             buffer.clear();
             return true;
         // checking if a command for this input channel exists
+        } else if(quickJs.IsActive()) {
+            QString valueText;
+            int equalIndex = buffer[0].indexOf('=');
+            if(equalIndex != -1) {
+                valueText = buffer[0].mid(equalIndex+1).trimmed();
+            } else {
+                int spaceIndex = buffer[0].lastIndexOf(' ');
+                if(spaceIndex != -1)
+                    valueText = buffer[0].mid(spaceIndex+1).trimmed();
+            }
+            quickJs.CallHandler(this, "on_" + func, valueText);
         } else if(!settingsMap[func].isEmpty()) {
             //qDebug() << "Hey, this one isn't empty!"; // testing
             //qDebug() << settingsMap[func]; // testing
@@ -564,7 +694,7 @@ bool qhookerMain::GameStarted(const QString &input)
                 }
             }
         // if setting does not exist, register it
-        } else if(!settings->contains(func)) {
+        } else if(settings && !settings->contains(func)) {
             settings->beginGroup("Output");
             settings->setValue(func, "");
             settingsMap[func] = "";
@@ -591,8 +721,25 @@ void qhookerMain::ReadyRead()
 }
 
 
-void qhookerMain::LoadConfig(const QString &path)
+bool qhookerMain::LoadConfig(const QString &path)
 {
+    if(path.endsWith(".js")) {
+        if(settings) {
+            delete settings;
+            settings = nullptr;
+        }
+        settingsMap.clear();
+        return quickJs.Load(path, this);
+    }
+
+    quickJs.Clear();
+
+    if(settings) {
+        delete settings;
+        settings = nullptr;
+    }
+    settingsMap.clear();
+
     settings = new QSettings(path, QSettings::IniFormat);
 
     if(!settings->contains("MameStart")) {
@@ -617,4 +764,5 @@ void qhookerMain::LoadConfig(const QString &path)
         else settingsMap[settingsTemp[i]] = settings->value(settingsTemp[i]).toString();
     }
     settings->endGroup();
+    return true;
 }
